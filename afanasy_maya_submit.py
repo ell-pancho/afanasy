@@ -118,9 +118,7 @@ class MayaSubmit(Submit):
         
         frames_per_task = max(1, frames_per_task)
         by_frame = max(1, by_frame)
-        
-        jobs = []
-        blocks = []
+        jobs, blocks = [], []
         
         if mode in [0, 1]:
             job = af.Job(job_name)
@@ -139,7 +137,6 @@ class MayaSubmit(Submit):
                 layer_outputs = outputs
                 
                 if layer_name != 'defaultRenderLayer':
-    
                     replace_name = layer_name.replace('rs_', '')
                     layer_outputs = outputs.replace('masterLayer', replace_name)
 
@@ -196,7 +193,6 @@ class MayaSubmit(Submit):
             job.setDependMaskGlobal(self.depend_mask_global)
             job.setHostsMask(self.hosts_mask)
             job.setHostsMaskExclude(self.hosts_exclude)
-
             job.setTimeLife(self.life_time * 3600 if self.life_time > 0 else 240 * 3600)
 
             if mode in [0, 1]:
@@ -236,7 +232,14 @@ def log_decorator(func):
 
 class MayaSubmitUI(QMainWindow):
     
-    def __init__(self, parent=None):
+    def __init__(self, 
+                 file_name_prefix='',
+                 mode=1,
+                 frame_per_task=1,
+                 start_frame=1,
+                 end_frame=1,
+                 by_frame=1,
+                 parent=None):
 
         if parent is None:
             parent = self._maya_main_window()
@@ -249,6 +252,13 @@ class MayaSubmitUI(QMainWindow):
 
         self.settings = QSettings()
         self.parent = parent
+        
+        self.file_name_prefix = file_name_prefix
+        self.mode = mode
+        self.frame_per_task = frame_per_task
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+        self.by_frame = by_frame
 
         self._init_widgets()
         self._init_connections()
@@ -261,36 +271,36 @@ class MayaSubmitUI(QMainWindow):
         grid_widget = QWidget()
         grid_layout = QGridLayout(grid_widget)
 
-        self.file_name_prefix = QLineEdit('')
-        self.start_frame = QLineEdit()
-        self.end_frame = QLineEdit()
-        self.frame_per_task = QLineEdit('1')
-        self.by_frame = QLineEdit('1')
-        self.mode = QComboBox()
+        self.file_name_prefix_widget = QLineEdit('')
+        self.start_frame_widget = QLineEdit()
+        self.end_frame_widget = QLineEdit()
+        self.frame_per_task_widget = QLineEdit('1')
+        self.by_frame_widget = QLineEdit('1')
+        self.mode_widget = QComboBox()
         
-        self.mode.addItems(MODES)
+        self.mode_widget.addItems(MODES)
         
-        for line_edit in [self.start_frame, self.end_frame, 
-                          self.frame_per_task, self.by_frame]:
+        for line_edit in [self.start_frame_widget, self.end_frame_widget, 
+                          self.frame_per_task_widget, self.by_frame_widget]:
             line_edit.setValidator(QIntValidator())
             
         grid_layout.addWidget(QLabel("File name prefix"), 0, 0)
-        grid_layout.addWidget(self.file_name_prefix, 0, 1)
+        grid_layout.addWidget(self.file_name_prefix_widget, 0, 1)
         
         grid_layout.addWidget(QLabel("Mode"), 1, 0)
-        grid_layout.addWidget(self.mode, 1, 1)
+        grid_layout.addWidget(self.mode_widget, 1, 1)
         
         grid_layout.addWidget(QLabel("Frame per task"), 2, 0)
-        grid_layout.addWidget(self.frame_per_task, 2, 1)
+        grid_layout.addWidget(self.frame_per_task_widget, 2, 1)
 
         grid_layout.addWidget(QLabel("Start frame"), 3, 0)
-        grid_layout.addWidget(self.start_frame, 3, 1)
+        grid_layout.addWidget(self.start_frame_widget, 3, 1)
 
         grid_layout.addWidget(QLabel("End frame"), 4, 0)
-        grid_layout.addWidget(self.end_frame, 4, 1)
+        grid_layout.addWidget(self.end_frame_widget, 4, 1)
 
         grid_layout.addWidget(QLabel("By frame"), 5, 0)
-        grid_layout.addWidget(self.by_frame, 5, 1)
+        grid_layout.addWidget(self.by_frame_widget, 5, 1)
         
         self.submit_button = QPushButton("Submit job")
 
@@ -306,45 +316,37 @@ class MayaSubmitUI(QMainWindow):
     
     def _init_settings(self):
         
-        outputs = pm.renderSettings(fullPath=1, 
-                                    firstImageName=1, 
-                                    lastImageName=1,
-                                    leaveUnmatchedTokens=1, 
-                                    customTokenString="RenderPass=Beauty")[0]
-        
-        self.file_name_prefix.setText(outputs)
-        self.start_frame.setText(str(cmds.playbackOptions(query=True, minTime=True)))
-        self.end_frame.setText(str(cmds.playbackOptions(query=True, maxTime=True)))
-
         self.setGeometry(0, 0, 700, 50)
         self.setWindowTitle('Afanasy Maya Submiter')
         self._set_to_center()
-        
         self.restoreState(self.settings.value('state'))
         self.restoreGeometry(self.settings.value('geometry'))
 
         prev_settings = self.settings.value('prev_settings')
 
         if prev_settings:
-            by_frame = prev_settings.get('by_frame') or '1'
-            frame_per_task = prev_settings.get('frame_per_task') or '1'
-            mode = prev_settings.get('mode') or 0
-
-            self.by_frame.setText(by_frame)
-            self.frame_per_task.setText(frame_per_task)
-            self.mode.setCurrentIndex(mode)
+            self.by_frame = prev_settings.get('by_frame') or '1'
+            self.frame_per_task = prev_settings.get('frame_per_task') or '1'
+            self.mode = prev_settings.get('mode') or 0
+            
+        self.file_name_prefix_widget.setText(self.file_name_prefix)
+        self.start_frame_widget.setText(str(self.start_frame))
+        self.end_frame_widget.setText(str(self.end_frame))
+        self.by_frame_widget.setText(str(self.by_frame))
+        self.frame_per_task_widget.setText(str(self.frame_per_task))
+        self.mode_widget.setCurrentIndex(self.mode)
     
     @log_decorator
     def maya_submit_job(self):
         file_full_path = pm.sceneName()
         job_name = os.path.basename(file_full_path)
         project_path = 'D:/output'
-        start_frame = int(float(self.start_frame.text()))
-        end_frame = int(float(self.end_frame.text()))
-        by_frame = int(float(self.by_frame.text()))
-        frame_per_task = int(self.frame_per_task.text())
-        output = self.file_name_prefix.text()
-        mode = self.mode.currentIndex()
+        start_frame = int(float(self.start_frame_widget.text()))
+        end_frame = int(float(self.end_frame_widget.text()))
+        by_frame = int(float(self.by_frame_widget.text()))
+        frame_per_task = int(float(self.frame_per_task_widget.text()))
+        output = self.file_name_prefix_widget.text()
+        mode = self.mode_widget.currentIndex()
         
         submitter = MayaSubmit()
         submitter.start(inputs='',
@@ -366,9 +368,9 @@ class MayaSubmitUI(QMainWindow):
         self.settings.setValue('geometry', self.saveGeometry())
 
         settings_kwargs = {
-            'by_frame': self.by_frame.text(),
-            'frame_per_task': self.frame_per_task.text(),
-            'mode': self.mode.currentIndex(),
+            'by_frame': self.by_frame_widget.text(),
+            'frame_per_task': self.frame_per_task_widget.text(),
+            'mode': self.mode_widget.currentIndex(),
         }
 
         self.settings.setValue('prev_settings', settings_kwargs)
@@ -387,5 +389,16 @@ class MayaSubmitUI(QMainWindow):
 
 
 if __name__ == '__main__':
-    submit_window = MayaSubmitUI()
+    
+    file_name_prefix = pm.renderSettings(fullPath=1,
+                                         firstImageName=1, 
+                                         lastImageName=1,
+                                         leaveUnmatchedTokens=1, 
+                                         customTokenString="RenderPass=Beauty")[0]
+    start_frame = cmds.playbackOptions(query=True, minTime=True)
+    end_frame = cmds.playbackOptions(query=True, maxTime=True)
+    
+    submit_window = MayaSubmitUI(file_name_prefix=file_name_prefix,
+                                 start_frame=start_frame,
+                                 end_frame=end_frame)
     submit_window.show()
