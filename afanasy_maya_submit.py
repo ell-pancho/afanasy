@@ -4,14 +4,14 @@
 import os
 import sys
 
-CGRU_HOME = "D:/cgru.3.2.1"
+CGRU_HOME = "D:/cgru.3.2.0"
 CGRU_LIBS = "{}/lib/python".format(CGRU_HOME)
 CGRU_AFANASY = "{}/afanasy/python".format(CGRU_HOME)
 CGRU_PLUGINS = "{}/plugins/maya".format(CGRU_HOME)
 
-MODES = ['One job (single block with all layers)', 
-         'One job (with multiply blocks)', 
-         'Multiply jobs (single block per layer)']
+MODES = ['One job (one block - all layers)', 
+         'One job (one block - one layer)', 
+         'Multiply jobs (one job - one layer)']
 
 for path in [CGRU_LIBS, CGRU_AFANASY]:
     if path not in sys.path:
@@ -25,6 +25,7 @@ import pymel.core as pm
 import maya.cmds as cmds
 import maya.OpenMayaUI as OpenMayaUI
 from shiboken2 import wrapInstance
+from abc import ABCMeta, abstractmethod
 
 try:
 
@@ -38,7 +39,7 @@ except ImportError:
     from PySide.QtCore import *
 
 
-class Submit:
+class Submit(metaclass=ABCMeta):
     
     def __init__(self, 
                  depend_mask_global='',
@@ -59,12 +60,15 @@ class Submit:
         self.errors_forgive_time = errors_forgive_time
         self.life_time = life_time
     
+    @abstractmethod
     def build_command(self):
         pass
     
+    @abstractmethod
     def start(self):
         pass
     
+    @abstractmethod
     def generate_preview(self):
         pass
     
@@ -72,7 +76,7 @@ class Submit:
 class MayaSubmit(Submit):
     
     def build_command(self,
-                      file_full_path='', 
+                      scene_full_path='', 
                       render_layer=None,
                       camera=None,
                       project=None,
@@ -80,25 +84,26 @@ class MayaSubmit(Submit):
         
         command = ['mayarender']
         
+        command.append('-r file')
         command.append('-s @#@ -e @#@ -b {}'.format(by_frame))
         
         if camera:
-            command.append(' -cam {}'.format(camera))
+            command.append('-cam "{}"'.format(camera))
 
         if render_layer:
-            command.append('-rl {}'.format(render_layer))
+            command.append('-rl "{}"'.format(render_layer))
 
         if project:
-            command.append('-proj {}'.format(os.path.normpath(project)))
-
-        command.append(file_full_path)
+            command.append('-proj "{}"'.format(os.path.normpath(project)))
+            
+        if scene_full_path:
+            command.append(scene_full_path)
 
         return ' '.join(command)
 
     def start(self, 
-              inputs='',
-              outputs='',
-              file_full_path='',
+              render_directory='',
+              scene_full_path='',
               camera=None,
               project=None,
               mode=1,
@@ -134,11 +139,11 @@ class MayaSubmit(Submit):
                 
                 layer_name = layer.name()
                 block = af.Block(layer_name, 'maya_redshift')
-                layer_outputs = outputs
+                layer_outputs = render_directory
                 
                 if layer_name != 'defaultRenderLayer':
                     replace_name = layer_name.replace('rs_', '')
-                    layer_outputs = outputs.replace('masterLayer', replace_name)
+                    layer_outputs = render_directory.replace('masterLayer', replace_name)
 
                 if generate_previews:
                     outputs_split = self.generate_preview(block, layer_outputs)
@@ -150,7 +155,7 @@ class MayaSubmit(Submit):
                 block.setErrorsTaskSameHost(self.errors_task_same_host)
                 block.setErrorsForgiveTime(self.errors_forgive_time)
                 
-                command = self.build_command(file_full_path=file_full_path,
+                command = self.build_command(scene_full_path=scene_full_path,
                                              render_layer=layer_name,
                                              camera=camera,
                                              project=project,
@@ -171,10 +176,10 @@ class MayaSubmit(Submit):
             block = af.Block('All Layers', 'maya_redshift')
 
             if generate_previews:
-                outputs_split = self.generate_preview(block, outputs)
+                outputs_split = self.generate_preview(block, render_directory)
                 block.setFiles(outputs_split)
                 
-            command = self.build_command(file_full_path=file_full_path,
+            command = self.build_command(scene_full_path=scene_full_path,
                                          camera=camera,
                                          project=project,
                                          by_frame=by_frame)
@@ -186,10 +191,6 @@ class MayaSubmit(Submit):
         for job in jobs:
             
             job.setAnnotation(annotation)
-            
-            job.setFolder('input', inputs)
-            job.setFolder('output', os.path.dirname(outputs))
-            
             job.setDependMaskGlobal(self.depend_mask_global)
             job.setHostsMask(self.hosts_mask)
             job.setHostsMaskExclude(self.hosts_exclude)
@@ -198,20 +199,22 @@ class MayaSubmit(Submit):
             if mode in [0, 1]:
                 job.blocks.extend(blocks)
 
-            status, _ = job.send()
+            status, data = job.send()
             
             if not status:
-                pm.PopupError('Something went wrong!')
+                pm.system.displayWarning(status)
+            else:
+                pm.system.displayInfo(data)
                 
     def generate_preview(self, block, outputs):
         block.setFiles(
             afcommon.patternFromDigits(
                 afcommon.patternFromStdC(
-                    afcommon.patternFromPaths(outputs)
+                    afcommon.patternFromPaths(outputs, '')
                 )
             ).split(';')
         )
-                
+
 
 def log_decorator(func):
     
@@ -220,8 +223,6 @@ def log_decorator(func):
         redshift = pm.PyNode('redshiftOptions')
         stored_log_level = redshift.logLevel.get()
         redshift.logLevel.set(2)
-        
-        cmds.file(save=True, type="mayaAscii")
         
         func(*args, **kwargs)
         
@@ -338,22 +339,26 @@ class MayaSubmitUI(QMainWindow):
     
     @log_decorator
     def maya_submit_job(self):
-        file_full_path = pm.sceneName()
-        job_name = os.path.basename(file_full_path)
-        project_path = 'D:/output'
+        
+        render_directory = self.file_name_prefix_widget.text()
+        render_globals = pm.PyNode('defaultRenderGlobals')
+        prev_value = render_globals.imageFilePrefix.get()
+        
+        render_globals.imageFilePrefix.set(render_directory)
+        
+        cmds.file(save=True, type="mayaAscii")
+        
+        scene_full_path = pm.sceneName()
+        job_name = os.path.basename(scene_full_path)
         start_frame = int(float(self.start_frame_widget.text()))
         end_frame = int(float(self.end_frame_widget.text()))
         by_frame = int(float(self.by_frame_widget.text()))
         frame_per_task = int(float(self.frame_per_task_widget.text()))
-        output = self.file_name_prefix_widget.text()
         mode = self.mode_widget.currentIndex()
         
         submitter = MayaSubmit()
-        submitter.start(inputs='',
-                        outputs=output,
-                        file_full_path=file_full_path,
-                        camera=None,
-                        project=project_path,
+        submitter.start(render_directory=render_directory,
+                        scene_full_path=scene_full_path,
                         mode=mode,
                         job_name=job_name,
                         start_frame=start_frame,
@@ -362,6 +367,8 @@ class MayaSubmitUI(QMainWindow):
                         by_frame=by_frame,
                         annotation='',
                         generate_previews=False,)
+        
+        render_globals.imageFilePrefix.set(prev_value)
         
     def closeEvent(self, _):
         self.settings.setValue('state', self.saveState())
@@ -389,12 +396,10 @@ class MayaSubmitUI(QMainWindow):
 
 
 if __name__ == '__main__':
+
+    render_globals = pm.PyNode('defaultRenderGlobals')
+    file_name_prefix = render_globals.imageFilePrefix.get()
     
-    file_name_prefix = pm.renderSettings(fullPath=1,
-                                         firstImageName=1, 
-                                         lastImageName=1,
-                                         leaveUnmatchedTokens=1, 
-                                         customTokenString="RenderPass=Beauty")[0]
     start_frame = cmds.playbackOptions(query=True, minTime=True)
     end_frame = cmds.playbackOptions(query=True, maxTime=True)
     
