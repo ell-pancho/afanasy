@@ -6,8 +6,6 @@ from shiboken2 import wrapInstance
 import maya.OpenMayaUI as OpenMayaUI
 import maya.cmds as cmds
 import pymel.core as pm
-import afcommon
-import af
 import os
 import sys
 
@@ -26,6 +24,8 @@ for path in [CGRU_LIBS, CGRU_AFANASY]:
 
 os.environ['CGRU_LOCATION'] = CGRU_HOME
 
+import afcommon
+import af
 
 try:
 
