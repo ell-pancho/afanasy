@@ -10,7 +10,6 @@ import afcommon
 import af
 import os
 import sys
-import shlex
 
 CGRU_HOME = "D:/cgru.3.2.0"
 CGRU_LIBS = "{}/lib/python".format(CGRU_HOME)
