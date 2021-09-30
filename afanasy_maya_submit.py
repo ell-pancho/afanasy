@@ -101,6 +101,38 @@ class MayaSubmit(Submit):
 
         return ' '.join(command)
 
+    @staticmethod
+    def _get_frame_range_layer_override(layer, start_base, end_base):
+
+        layer_setup = layer.future(type='renderSetupLayer')
+        start, end = start_base, end_base
+
+        if layer_setup:
+
+            layer_setup = layer_setup[0].future(
+                type='renderSettingsCollection')
+            node_override = layer_setup[0].listConnections(
+                type=('relUniqueOverride', 'absUniqueOverride'),
+                source=True, destination=False)
+
+            for node in node_override:
+
+                if node.nodeType() == 'relUniqueOverride':
+
+                    if node.attribute.get() == 'startFrame':
+                        start = start_base + node.offset.get() + 1
+                    elif node.attribute.get() == 'endFrame':
+                        end = end_base + node.offset.get() + 1
+
+                elif node.nodeType() == 'absUniqueOverride':
+
+                    if node.attribute.get() == 'startFrame':
+                        start = node.attrValue.get()
+                    elif node.attribute.get() == 'endFrame':
+                        end = node.attrValue.get()
+
+        return int(start), int(end)
+
     def start(self,
               render_directory='',
               scene_full_path='',
@@ -157,20 +189,9 @@ class MayaSubmit(Submit):
                 end = end_frame
 
                 if override:
-
-                    layer_setup = layer.future(type='renderSetupLayer')
-
-                    if layer_setup:
-
-                        layer_start = layer_setup[0].future(
-                            type='relUniqueOverride')
-                        layer_end = layer_setup[0].future(
-                            type='absUniqueOverride')
-
-                        if layer_start:
-                            start = int(layer_start[0].offset.get() + 1)
-                        if layer_end:
-                            end = int(layer_end[0].attrValue.get())
+                    start, end = self._get_frame_range_layer_override(layer,
+                                                                      start,
+                                                                      end)
 
                 block.setNumeric(start, end,
                                  frames_per_task, by_frame)
