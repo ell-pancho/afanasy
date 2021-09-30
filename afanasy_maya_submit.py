@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import af
+import afcommon
 from abc import ABCMeta, abstractmethod
 from shiboken2 import wrapInstance
 import maya.OpenMayaUI as OpenMayaUI
@@ -24,8 +26,6 @@ for path in [CGRU_LIBS, CGRU_AFANASY]:
 
 os.environ['CGRU_LOCATION'] = CGRU_HOME
 
-import afcommon
-import af
 
 try:
 
@@ -114,6 +114,7 @@ class MayaSubmit(Submit):
               by_frame=1,
               annotation='',
               generate_previews=False,
+              override=False,
               ):
 
         if start_frame > end_frame:
@@ -139,18 +140,39 @@ class MayaSubmit(Submit):
 
                 layer_name = layer.name()
                 block = af.Block(layer_name, 'maya_redshift')
-                layer_outputs = render_directory
-
-                if layer_name != 'defaultRenderLayer':
-                    replace_name = layer_name.replace('rs_', '')
-                    layer_outputs = render_directory.replace(
-                        'masterLayer', replace_name)
 
                 if generate_previews:
+
+                    layer_outputs = render_directory
+
+                    if layer_name != 'defaultRenderLayer':
+                        replace_name = layer_name.replace('rs_', '')
+                        layer_outputs = render_directory.replace(
+                            'masterLayer', replace_name)
+
                     outputs_split = self.generate_preview(block, layer_outputs)
                     block.setFiles(outputs_split)
 
-                block.setNumeric(start_frame, end_frame,
+                start = start_frame
+                end = end_frame
+
+                if override:
+
+                    layer_setup = layer.future(type='renderSetupLayer')
+
+                    if layer_setup:
+
+                        layer_start = layer_setup[0].future(
+                            type='relUniqueOverride')
+                        layer_end = layer_setup[0].future(
+                            type='absUniqueOverride')
+
+                        if layer_start:
+                            start = int(layer_start[0].offset.get() + 1)
+                        if layer_end:
+                            end = int(layer_end[0].attrValue.get())
+
+                block.setNumeric(start, end,
                                  frames_per_task, by_frame)
                 block.setErrorsAvoidHost(self.errors_avoid_host)
                 block.setErrorsRetries(self.errors_retries)
@@ -305,6 +327,7 @@ class MayaSubmitUI(QMainWindow):
         self.frame_per_task_widget = QLineEdit('1')
         self.by_frame_widget = QLineEdit('1')
         self.mode_widget = QComboBox()
+        self.override_box = QCheckBox()
 
         self.mode_widget.addItems(MODES)
 
@@ -327,8 +350,11 @@ class MayaSubmitUI(QMainWindow):
         grid_layout.addWidget(QLabel("End frame"), 4, 0)
         grid_layout.addWidget(self.end_frame_widget, 4, 1)
 
-        grid_layout.addWidget(QLabel("By frame"), 5, 0)
-        grid_layout.addWidget(self.by_frame_widget, 5, 1)
+        grid_layout.addWidget(QLabel("Use override range"), 5, 0)
+        grid_layout.addWidget(self.override_box, 5, 1)
+
+        grid_layout.addWidget(QLabel("By frame"), 6, 0)
+        grid_layout.addWidget(self.by_frame_widget, 6, 1)
 
         self.submit_button = QPushButton("Submit job")
 
@@ -382,6 +408,7 @@ class MayaSubmitUI(QMainWindow):
         by_frame = int(float(self.by_frame_widget.text()))
         frame_per_task = int(float(self.frame_per_task_widget.text()))
         mode = self.mode_widget.currentIndex()
+        override = self.override_box.isChecked()
 
         submitter = MayaSubmit()
         result = submitter.start(render_directory=render_directory,
@@ -393,7 +420,8 @@ class MayaSubmitUI(QMainWindow):
                                  frames_per_task=frame_per_task,
                                  by_frame=by_frame,
                                  annotation='',
-                                 generate_previews=False,)
+                                 generate_previews=False,
+                                 override=override,)
 
         if result:
 
